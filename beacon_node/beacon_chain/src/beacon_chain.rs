@@ -1453,7 +1453,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         metrics::inc_counter(&metrics::FORK_CHOICE_REQUESTS);
 
         // Start fork choice metrics timer.
-        let timer = metrics::start_timer(&metrics::FORK_CHOICE_TIMES);
+        let full_timer = metrics::start_timer(&metrics::FORK_CHOICE_TIMES);
 
         // Determine the root of the block that is the head of the chain.
         let beacon_block_root = self.fork_choice.find_head(&self)?;
@@ -1461,6 +1461,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         // If a new head was chosen.
         let result = if beacon_block_root != self.head_info()?.block_root {
             metrics::inc_counter(&metrics::FORK_CHOICE_CHANGED_HEAD);
+
+            let db_read_timer = metrics::start_timer(&metrics::FORK_CHOICE_DATABASE_READ_TIMES);
 
             let beacon_block = self
                 .get_block(&beacon_block_root)?
@@ -1470,6 +1472,10 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
             let beacon_state: BeaconState<T::EthSpec> = self
                 .get_state(&beacon_state_root, Some(beacon_block.slot()))?
                 .ok_or_else(|| Error::MissingBeaconState(beacon_state_root))?;
+
+            metrics::stop_timer(db_read_timer);
+            let inspect_head_timer =
+                metrics::start_timer(&metrics::FORK_CHOICE_INSPECT_NEW_HEAD_TIMES);
 
             let previous_slot = self.head_info()?.slot;
             let new_slot = beacon_block.slot();
@@ -1514,11 +1520,17 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
 
             // Never revert back past a finalized epoch.
             if new_finalized_epoch < old_finalized_epoch {
+                metrics::stop_timer(inspect_head_timer);
+
                 Err(Error::RevertedFinalizedEpoch {
                     previous_epoch: old_finalized_epoch,
                     new_epoch: new_finalized_epoch,
                 })
             } else {
+                metrics::stop_timer(inspect_head_timer);
+                let prepare_head_timer =
+                    metrics::start_timer(&metrics::FORK_CHOICE_PREPARE_NEW_HEAD_TIMES);
+
                 let previous_head_beacon_block_root = self
                     .canonical_head
                     .try_read_for(HEAD_LOCK_TIMEOUT)
@@ -1535,6 +1547,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
 
                 new_head.beacon_state.build_all_caches(&self.spec)?;
 
+                metrics::stop_timer(prepare_head_timer);
                 let timer = metrics::start_timer(&metrics::UPDATE_HEAD_TIMES);
 
                 // Update the checkpoint that stores the head of the chain at the time it received the
@@ -1566,7 +1579,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         };
 
         // End fork choice metrics timer.
-        metrics::stop_timer(timer);
+        metrics::stop_timer(full_timer);
 
         if result.is_err() {
             metrics::inc_counter(&metrics::FORK_CHOICE_ERRORS);
@@ -1583,6 +1596,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         old_finalized_epoch: Epoch,
         finalized_block_root: Hash256,
     ) -> Result<(), Error> {
+        let full_timer = metrics::start_timer(&metrics::AFTER_FINALIZATION_TIMES);
+
         let finalized_block = self
             .store
             .get_block(&finalized_block_root)?
@@ -1620,6 +1635,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                 epoch: new_finalized_epoch,
                 root: finalized_block_root,
             });
+
+            metrics::stop_timer(full_timer);
 
             Ok(())
         }

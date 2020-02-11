@@ -142,12 +142,30 @@ lazy_static! {
         try_create_int_counter("beacon_balances_cache_hits_total", "Count of times balances cache fulfils request");
     pub static ref BALANCES_CACHE_MISSES: Result<IntCounter> =
         try_create_int_counter("beacon_balances_cache_misses_total", "Count of times balances cache fulfils request");
+    pub static ref FORK_CHOICE_DATABASE_READ_TIMES: Result<Histogram> = try_create_histogram(
+        "beacon_fork_choice_database_read_seconds",
+        "Time taken to read new heads from the database"
+    );
+    pub static ref FORK_CHOICE_INSPECT_NEW_HEAD_TIMES: Result<Histogram> = try_create_histogram(
+        "beacon_fork_choice_inspect_new_head_seconds",
+        "Time taken to inspect the new head to see if it is worth updating"
+    );
+    pub static ref FORK_CHOICE_PREPARE_NEW_HEAD_TIMES: Result<Histogram> = try_create_histogram(
+        "beacon_fork_choice_prepare_new_head_seconds",
+        "Time taken to prepare the new canonical head before it is updated"
+    );
 
     /*
      * Persisting BeaconChain to disk
      */
     pub static ref PERSIST_CHAIN: Result<Histogram> =
-        try_create_histogram("beacon_persist_chain", "Time taken to update the canonical head");
+        try_create_histogram("beacon_persist_chain", "Time taken to save the beacon chain to disk");
+
+    /*
+     * Handling finalization
+     */
+    pub static ref AFTER_FINALIZATION_TIMES: Result<Histogram> =
+        try_create_histogram("beacon_after_finalization", "Time taken to run functions after finalization occurs");
 
     /*
      * Eth1
