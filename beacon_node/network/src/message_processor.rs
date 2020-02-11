@@ -495,7 +495,7 @@ impl<T: BeaconChainTypes> MessageProcessor<T> {
                     // The `MessageHandler` would be the place to put this, however it doesn't seem
                     // to have a reference to the `BeaconChain`. I will leave this for future
                     // works.
-                    match self.chain.fork_choice() {
+                    match self.chain.fork_choice(None) {
                         Ok(()) => trace!(
                             self.log,
                             "Fork choice success";

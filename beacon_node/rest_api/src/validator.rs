@@ -295,7 +295,7 @@ pub fn publish_beacon_block<T: BeaconChainTypes>(
                         // found.
                         //
                         // The new head may or may not be the block we just received.
-                        if let Err(e) = beacon_chain.fork_choice() {
+                        if let Err(e) = beacon_chain.fork_choice(None) {
                             error!(
                                 log,
                                 "Failed to find beacon chain head";

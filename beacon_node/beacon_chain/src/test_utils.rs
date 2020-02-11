@@ -255,7 +255,7 @@ where
                 .process_block(block)
                 .expect("should not error during block processing");
 
-            self.chain.fork_choice().expect("should find head");
+            self.chain.fork_choice(None).expect("should find head");
 
             if let BlockProcessingOutcome::Processed { block_root } = outcome {
                 head_block_root = Some(block_root);

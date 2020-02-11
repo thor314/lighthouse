@@ -177,7 +177,7 @@ fn process_batch<T: BeaconChainTypes>(
 /// Runs fork-choice on a given chain. This is used during block processing after one successful
 /// block import.
 fn run_fork_choice<T: BeaconChainTypes>(chain: Arc<BeaconChain<T>>, log: &slog::Logger) {
-    match chain.fork_choice() {
+    match chain.fork_choice(None) {
         Ok(()) => trace!(
             log,
             "Fork choice success";

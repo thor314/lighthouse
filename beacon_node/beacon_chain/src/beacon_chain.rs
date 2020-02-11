@@ -1319,8 +1319,15 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         // solution would be to use a database transaction (once our choice of database and API
         // settles down).
         // See: https://github.com/sigp/lighthouse/issues/692
-        self.store.put_state(&state_root, state)?;
-        self.store.put_block(&block_root, signed_block)?;
+        self.store.put_state(&state_root, state.clone())?;
+        self.store.put_block(&block_root, signed_block.clone())?;
+
+        self.fork_choice(Some(CheckPoint {
+            beacon_block: signed_block,
+            beacon_block_root: block_root,
+            beacon_state: state,
+            beacon_state_root: state_root,
+        }))?;
 
         metrics::stop_timer(db_write_timer);
 
@@ -1449,7 +1456,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
     }
 
     /// Execute the fork choice algorithm and enthrone the result as the canonical head.
-    pub fn fork_choice(&self) -> Result<(), Error> {
+    pub fn fork_choice(&self, checkpoint_opt: Option<CheckPoint<T::EthSpec>>) -> Result<(), Error> {
         metrics::inc_counter(&metrics::FORK_CHOICE_REQUESTS);
 
         // Start fork choice metrics timer.
@@ -1462,23 +1469,45 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         let result = if beacon_block_root != self.head_info()?.block_root {
             metrics::inc_counter(&metrics::FORK_CHOICE_CHANGED_HEAD);
 
-            let beacon_block = self
-                .get_block(&beacon_block_root)?
-                .ok_or_else(|| Error::MissingBeaconBlock(beacon_block_root))?;
+            let new_head_opt = if let Some(checkpoint) = checkpoint_opt {
+                if checkpoint.beacon_block_root == beacon_block_root {
+                    Some(checkpoint)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
-            let beacon_state_root = beacon_block.state_root();
-            let beacon_state: BeaconState<T::EthSpec> = self
-                .get_state(&beacon_state_root, Some(beacon_block.slot()))?
-                .ok_or_else(|| Error::MissingBeaconState(beacon_state_root))?;
+            let mut new_head = if let Some(new_head) = new_head_opt {
+                new_head
+            } else {
+                let beacon_block = self
+                    .get_block(&beacon_block_root)?
+                    .ok_or_else(|| Error::MissingBeaconBlock(beacon_block_root))?;
+
+                let beacon_state_root = beacon_block.state_root();
+                let beacon_state: BeaconState<T::EthSpec> = self
+                    .get_state(&beacon_state_root, Some(beacon_block.slot()))?
+                    .ok_or_else(|| Error::MissingBeaconState(beacon_state_root))?;
+
+                CheckPoint {
+                    beacon_block,
+                    beacon_block_root,
+                    beacon_state,
+                    beacon_state_root,
+                }
+            };
 
             let previous_slot = self.head_info()?.slot;
-            let new_slot = beacon_block.slot();
+            let new_slot = new_head.beacon_block.slot();
 
             // Note: this will declare a re-org if we skip `SLOTS_PER_HISTORICAL_ROOT` blocks
             // between calls to fork choice without swapping between chains. This seems like an
             // extreme-enough scenario that a warning is fine.
             let is_reorg = self.head_info()?.block_root
-                != beacon_state
+                != new_head
+                    .beacon_state
                     .get_block_root(self.head_info()?.slot)
                     .map(|root| *root)
                     .unwrap_or_else(|_| Hash256::random());
@@ -1491,7 +1520,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                     "Beacon chain re-org";
                     "previous_head" => format!("{}", self.head_info()?.block_root),
                     "previous_slot" => previous_slot,
-                    "new_head_parent" => format!("{}", beacon_block.parent_root()),
+                    "new_head_parent" => format!("{}", new_head.beacon_block.parent_root()),
                     "new_head" => format!("{}", beacon_block_root),
                     "new_slot" => new_slot
                 );
@@ -1499,18 +1528,18 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                 debug!(
                     self.log,
                     "Head beacon block";
-                    "justified_root" => format!("{}", beacon_state.current_justified_checkpoint.root),
-                    "justified_epoch" => beacon_state.current_justified_checkpoint.epoch,
-                    "finalized_root" => format!("{}", beacon_state.finalized_checkpoint.root),
-                    "finalized_epoch" => beacon_state.finalized_checkpoint.epoch,
+                    "justified_root" => format!("{}", new_head.beacon_state.current_justified_checkpoint.root),
+                    "justified_epoch" => new_head.beacon_state.current_justified_checkpoint.epoch,
+                    "finalized_root" => format!("{}", new_head.beacon_state.finalized_checkpoint.root),
+                    "finalized_epoch" => new_head.beacon_state.finalized_checkpoint.epoch,
                     "root" => format!("{}", beacon_block_root),
                     "slot" => new_slot,
                 );
             };
 
             let old_finalized_epoch = self.head_info()?.finalized_checkpoint.epoch;
-            let new_finalized_epoch = beacon_state.finalized_checkpoint.epoch;
-            let finalized_root = beacon_state.finalized_checkpoint.root;
+            let new_finalized_epoch = new_head.beacon_state.finalized_checkpoint.epoch;
+            let finalized_root = new_head.beacon_state.finalized_checkpoint.root;
 
             // Never revert back past a finalized epoch.
             if new_finalized_epoch < old_finalized_epoch {
@@ -1525,13 +1554,6 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                     .ok_or_else(|| Error::CanonicalHeadLockTimeout)?
                     .beacon_block_root;
                 let current_head_beacon_block_root = beacon_block_root;
-
-                let mut new_head = CheckPoint {
-                    beacon_block,
-                    beacon_block_root,
-                    beacon_state,
-                    beacon_state_root,
-                };
 
                 new_head.beacon_state.build_all_caches(&self.spec)?;
 

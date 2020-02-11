@@ -362,7 +362,7 @@ impl<T: BeaconChainTypes> SyncManager<T> {
                         BlockProcessingOutcome::Processed { block_root } => {
                             info!(self.log, "Processed block"; "block" => format!("{}", block_root));
 
-                            match chain.fork_choice() {
+                            match chain.fork_choice(None) {
                                 Ok(()) => trace!(
                                     self.log,
                                     "Fork choice success";
@@ -586,7 +586,7 @@ impl<T: BeaconChainTypes> SyncManager<T> {
 
             if successes > 0 {
                 if let Some(chain) = self.chain.upgrade() {
-                    match chain.fork_choice() {
+                    match chain.fork_choice(None) {
                         Ok(()) => trace!(
                             self.log,
                             "Fork choice success";
