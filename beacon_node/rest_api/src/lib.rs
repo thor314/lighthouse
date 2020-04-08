@@ -40,6 +40,8 @@ use url_query::UrlQuery;
 
 pub use crate::helpers::parse_pubkey_bytes;
 pub use config::Config;
+pub use consensus::{IndividualVote, IndividualVotesRequest, IndividualVotesResponse};
+pub use validator::{ValidatorDutiesRequest, ValidatorDuty};
 
 pub type BoxFut = Box<dyn Future<Item = Response<Body>, Error = ApiError> + Send>;
 pub type NetworkChannel<T> = mpsc::UnboundedSender<NetworkMessage<T>>;

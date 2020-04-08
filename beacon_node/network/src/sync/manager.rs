@@ -33,9 +33,15 @@
 //! if an attestation references an unknown block) this manager can search for the block and
 //! subsequently search for parents if needed.
 
+use super::block_processor::{spawn_block_processor, BatchProcessResult, ProcessId};
 use super::network_context::SyncNetworkContext;
+<<<<<<< HEAD
 use super::range_sync::{Batch, BatchProcessResult, RangeSync};
 use crate::router::processor::PeerSyncInfo;
+=======
+use super::range_sync::{BatchId, RangeSync};
+use crate::message_processor::PeerSyncInfo;
+>>>>>>> master
 use crate::service::NetworkMessage;
 use beacon_chain::{BeaconChain, BeaconChainTypes, BlockProcessingOutcome};
 use eth2_libp2p::rpc::methods::*;
@@ -99,10 +105,13 @@ pub enum SyncMessage<T: EthSpec> {
 
     /// A batch has been processed by the block processor thread.
     BatchProcessed {
-        process_id: u64,
-        batch: Box<Batch<T>>,
+        batch_id: BatchId,
+        downloaded_blocks: Vec<SignedBeaconBlock<T>>,
         result: BatchProcessResult,
     },
+
+    /// A parent lookup has failed for a block given by this `peer_id`.
+    ParentLookupFailed(PeerId),
 }
 
 /// Maintains a sequential list of parents to lookup and the lookup's current state.
@@ -172,6 +181,9 @@ pub struct SyncManager<T: BeaconChainTypes> {
 
     /// The logger for the import manager.
     log: Logger,
+
+    /// The sending part of input_channel
+    sync_send: mpsc::UnboundedSender<SyncMessage<T::EthSpec>>,
 }
 
 /// Spawns a new `SyncManager` thread which has a weak reference to underlying beacon
@@ -202,6 +214,7 @@ pub fn spawn<T: BeaconChainTypes>(
         single_block_lookups: FnvHashMap::default(),
         full_peers: HashSet::new(),
         log: log.clone(),
+        sync_send: sync_send.clone(),
     };
 
     // spawn the sync manager thread
@@ -590,8 +603,6 @@ impl<T: BeaconChainTypes> SyncManager<T> {
             // If the last block in the queue has an unknown parent, we continue the parent
             // lookup-search.
 
-            let total_blocks_to_process = parent_request.downloaded_blocks.len();
-
             if let Some(chain) = self.chain.upgrade() {
                 let newest_block = parent_request
                     .downloaded_blocks
@@ -606,7 +617,15 @@ impl<T: BeaconChainTypes> SyncManager<T> {
                         return;
                     }
                     Ok(BlockProcessingOutcome::Processed { .. })
-                    | Ok(BlockProcessingOutcome::BlockIsAlreadyKnown { .. }) => {}
+                    | Ok(BlockProcessingOutcome::BlockIsAlreadyKnown { .. }) => {
+                        spawn_block_processor(
+                            self.chain.clone(),
+                            ProcessId::ParentLookup(parent_request.last_submitted_peer.clone()),
+                            parent_request.downloaded_blocks,
+                            self.sync_send.clone(),
+                            self.log.clone(),
+                        );
+                    }
                     Ok(outcome) => {
                         // all else we consider the chain a failure and downvote the peer that sent
                         // us the last block
@@ -634,6 +653,7 @@ impl<T: BeaconChainTypes> SyncManager<T> {
                 // chain doesn't exist, drop the parent queue and return
                 return;
             }
+<<<<<<< HEAD
 
             //TODO: Shift this to a block processing thread
 
@@ -692,6 +712,8 @@ impl<T: BeaconChainTypes> SyncManager<T> {
                     ),
                 };
             }
+=======
+>>>>>>> master
         }
     }
 
@@ -782,16 +804,19 @@ impl<T: BeaconChainTypes> Future for SyncManager<T> {
                         self.inject_error(peer_id, request_id);
                     }
                     SyncMessage::BatchProcessed {
-                        process_id,
-                        batch,
+                        batch_id,
+                        downloaded_blocks,
                         result,
                     } => {
                         self.range_sync.handle_block_process_result(
                             &mut self.network,
-                            process_id,
-                            *batch,
+                            batch_id,
+                            downloaded_blocks,
                             result,
                         );
+                    }
+                    SyncMessage::ParentLookupFailed(peer_id) => {
+                        self.network.downvote_peer(peer_id);
                     }
                 },
                 Ok(Async::NotReady) => break,
