@@ -227,7 +227,8 @@ checksum = "7d5ca2cd0adc3f48f9e9ea5a6bbdf9ccc0bfade884847e484d452414c7ccffb3"
 name = "beacon_chain"
 version = "0.2.0"
 dependencies = [
- "bitvec 0.17.4",
+ "bitvec",
+ "bls",
  "environment",
  "eth1",
  "eth2_config",
@@ -328,16 +329,6 @@ name = "bitflags"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
-
-[[package]]
-name = "bitvec"
-version = "0.17.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41262f11d771fd4a61aa3ce019fca363b4b6c282fca9da2a31186d3965a47a5c"
-dependencies = [
- "either",
- "radium",
-]
 
 [[package]]
 name = "bitvec"
@@ -3036,7 +3027,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "329c8f7f4244ddb5c37c103641027a76c530e65e8e4b8240b29f81ea40508b17"
 dependencies = [
  "arrayvec 0.5.1",
- "bitvec 0.15.2",
+ "bitvec",
  "byte-slice-cast",
  "serde",
 ]
