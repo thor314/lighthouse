@@ -109,7 +109,22 @@ impl Eth1GenesisService {
                 // find genesis much quicker.
                 let update_interval = if *service.sync_blocks.lock() {
                     match service.core.latest_block_timestamp() {
-                        Some(t) if t < spec.min_genesis_time => Duration::from_millis(50),
+                        Some(t) if t < spec.min_genesis_time => {
+                            // Safe from overflow due to match guard.
+                            let time_until = spec.min_genesis_time - t;
+
+                            // Only do a fast poll time if we're more than two follow-distance
+                            // values away from genesis. This avoids doing really fast polling when
+                            // we've caught up to the head and listening on a block-per-block
+                            // basis.
+                            if time_until
+                                > spec.seconds_per_eth1_block * spec.eth1_follow_distance * 2
+                            {
+                                Duration::from_millis(50)
+                            } else {
+                                initial_update_interval
+                            }
+                        }
                         _ => initial_update_interval,
                     }
                 } else {
