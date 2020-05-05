@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 use tokio::timer::Delay;
 use types::{BeaconState, ChainSpec, Deposit, Eth1Data, EthSpec, Hash256};
 
+const BLOCKS_PER_GENESIS_POLL: usize = 250;
+
 /// Provides a service that connects to some Eth1 HTTP JSON-RPC endpoint and maintains a cache of eth1
 /// blocks and deposits, listening for the eth1 block that triggers eth2 genesis and returning the
 /// genesis `BeaconState`.
@@ -41,8 +43,8 @@ impl Eth1GenesisService {
     /// Modifies the given `config` to make it more suitable to the task of listening to genesis.
     pub fn new(config: Eth1Config, log: Logger) -> Self {
         let config = Eth1Config {
-            // Truncating the block cache makes searching for genesis more
-            // complicated.
+            // Auto-truncating the block cache makes searching for genesis more
+            // complicated. We will do it manually for genesis.
             block_cache_truncation: None,
             // Scan large ranges of blocks when awaiting genesis.
             blocks_per_log_query: 1_000,
@@ -51,12 +53,9 @@ impl Eth1GenesisService {
             // For small testnets this makes finding genesis much faster,
             // as it usually happens within 1,000 blocks.
             max_log_requests_per_update: Some(5),
-            // Only perform a few logs requests each time the eth1 node is polled.
-            //
-            // For small testnets, this is much faster as they do not have
-            // a `MIN_GENESIS_SECONDS`, so after `MIN_GENESIS_VALIDATOR_COUNT`
-            // has been reached only a single block needs to be read.
-            max_blocks_per_update: Some(5),
+            // Set a custom blocks-per-update query for genesis, it's a special case compared to
+            // normal eth1 block caching.
+            max_blocks_per_update: Some(BLOCKS_PER_GENESIS_POLL),
             ..config
         };
 
@@ -89,7 +88,7 @@ impl Eth1GenesisService {
     /// - `Err(e)` if there is some internal error during updates.
     pub fn wait_for_genesis_state<E: EthSpec>(
         &self,
-        update_interval: Duration,
+        initial_update_interval: Duration,
         spec: ChainSpec,
     ) -> impl Future<Item = BeaconState<E>, Error = String> {
         let service = self.clone();
@@ -104,6 +103,18 @@ impl Eth1GenesisService {
                 let log = service.core.log.clone();
                 let min_genesis_active_validator_count = spec.min_genesis_active_validator_count;
                 let min_genesis_time = spec.min_genesis_time;
+
+                // If it's time to sync blocks and the latest block timestamp is prior to min
+                // genesis time then start doing updates much more frequently, this will help us
+                // find genesis much quicker.
+                let update_interval = if *service.sync_blocks.lock() {
+                    match service.core.latest_block_timestamp() {
+                        Some(t) if t < spec.min_genesis_time => Duration::from_millis(50),
+                        _ => initial_update_interval,
+                    }
+                } else {
+                    initial_update_interval
+                };
 
                 Delay::new(Instant::now() + update_interval)
                     .map_err(|e| format!("Delay between genesis deposit checks failed: {:?}", e))
@@ -192,6 +203,9 @@ impl Eth1GenesisService {
                                 "cache_head" => service_4.highest_known_block(),
                             );
 
+                            // Drop all the scanned blocks as they are no longer required.
+                            service_4.core.clear_block_cache();
+
                             Ok(Loop::Continue((spec, state)))
                         }
                     })
@@ -257,7 +271,7 @@ impl Eth1GenesisService {
                     })
                     .map(|is_valid| {
                         if !is_valid {
-                            info!(
+                            debug!(
                                 self.core.log,
                                 "Inspected new eth1 block";
                                 "msg" => "did not trigger genesis",
