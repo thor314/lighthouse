@@ -185,6 +185,13 @@ impl Service {
         self.inner.block_cache.read().latest_block_timestamp()
     }
 
+    /// Removes all blocks from the cache, except for the latest block.
+    ///
+    /// We don't remove the latest blocks so we don't lose track of the latest block.
+    pub fn clear_block_cache(&self) {
+        self.inner.block_cache.write().truncate(1)
+    }
+
     /// Returns the lowest block number stored.
     pub fn lowest_block_number(&self) -> Option<u64> {
         self.inner.block_cache.read().lowest_block_number()
