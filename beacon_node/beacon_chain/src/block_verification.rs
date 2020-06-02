@@ -321,16 +321,11 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
             });
         }
 
-        //let mut parent = load_parent(block.message, chain)?;
-        // load parent had type Result<BeaconSnapshot<T::EthSpec>, BlockError<T::EthSpec>> {
-        // load parent correct now needs to return the block it's consuming, so give that
-        // return type Result<(BeaconSnapshot<T::EthSpec>,T::EthSpec), BlockError<T::EthSpec>> {
-        // no, beacon_snapshot has params beacon_block, beacon_block_root, beacon_state, beacon_state_root. Just leverage beacon_block param.
-        let mut parent_correct = load_parent_correct(block.message, chain)?;
+        let mut parent = load_parent_correct(block.message, chain)?;
         let block_root = get_block_root(&block);
 
         let state = cheap_state_advance_to_obtain_committees(
-            &mut parent_correct.beacon_state,
+            &mut parent.beacon_state,
             block.slot(),
             &chain.spec,
         )?;
@@ -382,7 +377,7 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
         Ok(Self {
             block,
             block_root,
-            parent: parent_correct,
+            parent,
         })
     }
 
@@ -760,8 +755,6 @@ pub fn get_block_root<E: EthSpec>(block: &SignedBeaconBlock<E>) -> Hash256 {
 /// Returns `Err(BlockError::ParentUnknown)` if the parent is not found, or if an error occurs
 /// whilst attempting the operation.
 fn load_parent<T: BeaconChainTypes>(
-    // tk/want: take ownership of block, return on both error and success.
-    // kill next borrow.
     block: &BeaconBlock<T::EthSpec>,
     chain: &BeaconChain<T>,
 ) -> Result<BeaconSnapshot<T::EthSpec>, BlockError<T::EthSpec>> {
@@ -827,6 +820,7 @@ fn load_parent<T: BeaconChainTypes>(
     result
 }
 
+// NEED: update signature to keep and return of block
 fn load_parent_correct<T: BeaconChainTypes>(
     block: BeaconBlock<T::EthSpec>,
     chain: &BeaconChain<T>,
