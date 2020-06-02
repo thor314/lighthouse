@@ -91,7 +91,7 @@ pub enum BlockError<T: EthSpec> {
     /// The parent block was unknown.
     ParentUnknown(Hash256),
     /// The parent block was unknown.
-    ParentUnknownCorrect(Box<SignedBeaconBlock<T>>),
+    ParentUnknownCorrect(Box<BeaconBlock<T>>),
     /// The block slot is greater than the present slot.
     FutureSlot {
         present_slot: Slot,
@@ -321,11 +321,16 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
             });
         }
 
-        let mut parent = load_parent(&block.message, chain)?;
+        //let mut parent = load_parent(block.message, chain)?;
+        // load parent had type Result<BeaconSnapshot<T::EthSpec>, BlockError<T::EthSpec>> {
+        // load parent correct now needs to return the block it's consuming, so give that
+        // return type Result<(BeaconSnapshot<T::EthSpec>,T::EthSpec), BlockError<T::EthSpec>> {
+        // no, beacon_snapshot has params beacon_block, beacon_block_root, beacon_state, beacon_state_root. Just leverage beacon_block param.
+        let mut parent_correct = load_parent_correct(block.message, chain)?;
         let block_root = get_block_root(&block);
 
         let state = cheap_state_advance_to_obtain_committees(
-            &mut parent.beacon_state,
+            &mut parent_correct.beacon_state,
             block.slot(),
             &chain.spec,
         )?;
@@ -366,6 +371,7 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
 
         let expected_proposer =
             state.get_beacon_proposer_index(block.message.slot, &chain.spec)? as u64;
+        // checking the message proposer requires block to exist, at present it does not, it's getting consumed.
         if block.message.proposer_index != expected_proposer {
             return Err(BlockError::IncorrectBlockProposer {
                 block: block.message.proposer_index,
@@ -376,7 +382,7 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
         Ok(Self {
             block,
             block_root,
-            parent,
+            parent: parent_correct,
         })
     }
 
@@ -754,6 +760,8 @@ pub fn get_block_root<E: EthSpec>(block: &SignedBeaconBlock<E>) -> Hash256 {
 /// Returns `Err(BlockError::ParentUnknown)` if the parent is not found, or if an error occurs
 /// whilst attempting the operation.
 fn load_parent<T: BeaconChainTypes>(
+    // tk/want: take ownership of block, return on both error and success.
+    // kill next borrow.
     block: &BeaconBlock<T::EthSpec>,
     chain: &BeaconChain<T>,
 ) -> Result<BeaconSnapshot<T::EthSpec>, BlockError<T::EthSpec>> {
@@ -793,6 +801,75 @@ fn load_parent<T: BeaconChainTypes>(
             };
 
             // Load the parent blocks state from the database, returning an error if it is not found.
+            // It is an error because if we know the parent block we should also know the parent state.
+            let parent_state_root = parent_block.state_root();
+            let parent_state = chain
+                .get_state(&parent_state_root, Some(parent_block.slot()))?
+                .ok_or_else(|| {
+                    BeaconChainError::DBInconsistent(format!(
+                        "Missing state {:?}",
+                        parent_state_root
+                    ))
+                })?;
+
+            Ok(Some(BeaconSnapshot {
+                beacon_block: parent_block,
+                beacon_block_root: block.parent_root,
+                beacon_state: parent_state,
+                beacon_state_root: parent_state_root,
+            }))
+        })
+        .map_err(BlockError::BeaconChainError)?
+        .ok_or_else(|| BlockError::ParentUnknown(block.parent_root));
+
+    metrics::stop_timer(db_read_timer);
+
+    result
+}
+
+fn load_parent_correct<T: BeaconChainTypes>(
+    block: BeaconBlock<T::EthSpec>,
+    chain: &BeaconChain<T>,
+) -> Result<BeaconSnapshot<T::EthSpec>, BlockError<T::EthSpec>> {
+    let db_read_timer = metrics::start_timer(&metrics::BLOCK_PROCESSING_DB_READ);
+    // Reject any block if its parent is not known to fork choice.
+    //
+    // A block that is not in fork choice is either:
+    //
+    //  - Not yet imported: we should reject this block because we should only import a child
+    //  after its parent has been fully imported.
+    //  - Pre-finalized: if the parent block is _prior_ to finalization, we should ignore it
+    //  because it will revert finalization. Note that the finalized block is stored in fork
+    //  choice, so we will not reject any child of the finalized block (this is relevant during
+    //  genesis).
+    if !chain.fork_choice.contains_block(&block.parent_root) {
+        return Err(BlockError::ParentUnknownCorrect(Box::new(block)));
+    }
+
+    // Load the parent block and state from disk, returning early if it's not available.
+    let result = chain
+        .snapshot_cache
+        .try_write_for(BLOCK_PROCESSING_CACHE_LOCK_TIMEOUT)
+        // ok -> write snapshot_cache with try_remove:
+        // if there is a snapshot with `block_root`, remove and return it.
+        .and_then(|mut snapshot_cache| snapshot_cache.try_remove(block.parent_root))
+        .map(|snapshot| Ok(Some(snapshot))) // got parent_root -> chill, give snapshot now
+        .unwrap_or_else(|| {
+            // didn't get parent -> we don't /yet/ know the parent
+
+            // Load the blocks parent block from the database, returning invalid if that block is not
+            // found.
+            //
+            // We don't return a DBInconsistent error here since it's possible for a block to
+            // exist in fork choice but not in the database yet. In such a case we simply
+            // indicate that we don't yet know the parent.
+            let parent_block = if let Some(block) = chain.get_block(&block.parent_root)? {
+                block
+            } else {
+                return Ok(None);
+            };
+
+            // Load the parent block's state from the database, returning an error if it is not found.
             // It is an error because if we know the parent block we should also know the parent state.
             let parent_state_root = parent_block.state_root();
             let parent_state = chain

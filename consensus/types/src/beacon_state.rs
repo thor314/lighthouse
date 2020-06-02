@@ -147,10 +147,7 @@ impl From<BeaconStateHash> for Hash256 {
     CompareFields,
 )]
 #[serde(bound = "T: EthSpec")]
-pub struct BeaconState<T>
-where
-    T: EthSpec,
-{
+pub struct BeaconState<T: EthSpec> {
     // Versioning
     pub genesis_time: u64,
     pub genesis_validators_root: Hash256,

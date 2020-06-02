@@ -1,6 +1,6 @@
 use crate::{BeaconChainError, BlockError};
 use state_processing::BlockProcessingError;
-use types::{EthSpec, Hash256, SignedBeaconBlock, Slot};
+use types::{BeaconBlock, EthSpec, Hash256, Slot};
 
 /// This is a legacy object that is being kept around to reduce merge conflicts.
 ///
@@ -18,7 +18,7 @@ pub enum BlockProcessingOutcome<T: EthSpec> {
     UnknownValidator(u64),
     /// The parent block was unknown.
     ParentUnknown(Hash256),
-    ParentUnknownCorrect(Box<SignedBeaconBlock<T>>),
+    ParentUnknownCorrect(Box<BeaconBlock<T>>),
     /// The block slot is greater than the present slot.
     FutureSlot {
         present_slot: Slot,
