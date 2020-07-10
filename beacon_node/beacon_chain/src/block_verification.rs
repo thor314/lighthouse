@@ -91,7 +91,7 @@ pub enum BlockError<T: EthSpec> {
     /// The parent block was unknown.
     ParentUnknown(Hash256),
     /// The parent block was unknown.
-    ParentUnknownCorrect(Box<BeaconBlock<T>>),
+    ParentUnknownCorrect(Box<SignedBeaconBlock<T>>),
     /// The block slot is greater than the present slot.
     FutureSlot {
         present_slot: Slot,
@@ -838,7 +838,7 @@ fn load_parent_signed<T: BeaconChainTypes>(
     //
     // Since blocks are large, borrowing is less efficient than taking and returning ownership.
     if !chain.fork_choice.contains_block(&block.message.parent_root) {
-        return Err(BlockError::ParentUnknownCorrect(Box::new(block.message)));
+        return Err(BlockError::ParentUnknownCorrect(Box::new(block)));
     }
 
     // Load the parent block and state from disk, returning early if it's not available.
