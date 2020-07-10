@@ -321,7 +321,7 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
             });
         }
 
-        let mut parent = load_parent_correct(block.message, chain)?;
+        let mut parent = load_parent(&block.message, chain)?; //tk remove this borrow
         let block_root = get_block_root(&block);
 
         let state = cheap_state_advance_to_obtain_committees(
@@ -820,11 +820,10 @@ fn load_parent<T: BeaconChainTypes>(
     result
 }
 
-// NEED: update signature to keep and return of block
 fn load_parent_correct<T: BeaconChainTypes>(
     block: BeaconBlock<T::EthSpec>,
     chain: &BeaconChain<T>,
-) -> Result<BeaconSnapshot<T::EthSpec>, BlockError<T::EthSpec>> {
+) -> Result<(BeaconSnapshot<T::EthSpec>, Box<BeaconBlock<T::EthSpec>>), BlockError<T::EthSpec>> {
     let db_read_timer = metrics::start_timer(&metrics::BLOCK_PROCESSING_DB_READ);
     // Reject any block if its parent is not known to fork choice.
     //
@@ -836,18 +835,18 @@ fn load_parent_correct<T: BeaconChainTypes>(
     //  because it will revert finalization. Note that the finalized block is stored in fork
     //  choice, so we will not reject any child of the finalized block (this is relevant during
     //  genesis).
+    //
+    // Since blocks are large, borrowing is less efficient than taking and returning ownership.
     if !chain.fork_choice.contains_block(&block.parent_root) {
         return Err(BlockError::ParentUnknownCorrect(Box::new(block)));
     }
 
     // Load the parent block and state from disk, returning early if it's not available.
-    let result = chain
+    let result: Result<BeaconSnapshot<T::EthSpec>,BlockError<T::EthSpec>> = chain
         .snapshot_cache
         .try_write_for(BLOCK_PROCESSING_CACHE_LOCK_TIMEOUT)
-        // ok -> write snapshot_cache with try_remove:
-        // if there is a snapshot with `block_root`, remove and return it.
         .and_then(|mut snapshot_cache| snapshot_cache.try_remove(block.parent_root))
-        .map(|snapshot| Ok(Some(snapshot))) // got parent_root -> chill, give snapshot now
+        .map(|snapshot| Ok(Some(snapshot)))
         .unwrap_or_else(|| {
             // didn't get parent -> we don't /yet/ know the parent
 
@@ -887,7 +886,21 @@ fn load_parent_correct<T: BeaconChainTypes>(
 
     metrics::stop_timer(db_read_timer);
 
-    result
+		//tk want: return type Some((BeaconSnapshot, Box<BeaconBlock>)
+		//tk comment: Box because Blox are thicc bois, and want to live on the Heap
+		//tk have: result : Ok(BeaconSnapshot), block : BeaconBlock
+		//tk try: unwrap result, rewrap in tuple with block
+		//tk comment: upside, this is simple. Downside, it's a little ugly to unwrap
+		// and rewrap like this.
+
+		Ok((result.unwrap(), Box::from(block)))
+		//tk comment: result is briefly unhappy now, and needs to be explicitly
+		// typed above, but this builds. Now to try replacing all instances of load_parent.
+
+
+
+
+
 }
 
 /// Performs a cheap (time-efficient) state advancement so the committees for `slot` can be
