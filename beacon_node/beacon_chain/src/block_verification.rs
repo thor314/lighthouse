@@ -896,11 +896,77 @@ fn load_parent_correct<T: BeaconChainTypes>(
 		Ok((result.unwrap(), Box::from(block)))
 		//tk comment: result is briefly unhappy now, and needs to be explicitly
 		// typed above, but this builds. Now to try replacing all instances of load_parent.
+}
 
+fn load_parent_signed<T: BeaconChainTypes>(
+    block: SignedBeaconBlock<T::EthSpec>,
+    chain: &BeaconChain<T>,
+) -> Result<(BeaconSnapshot<T::EthSpec>, Box<SignedBeaconBlock<T::EthSpec>>), BlockError<T::EthSpec>> {
+    let db_read_timer = metrics::start_timer(&metrics::BLOCK_PROCESSING_DB_READ);
+    // Reject any block if its parent is not known to fork choice.
+    //
+    // A block that is not in fork choice is either:
+    //
+    //  - Not yet imported: we should reject this block because we should only import a child
+    //  after its parent has been fully imported.
+    //  - Pre-finalized: if the parent block is _prior_ to finalization, we should ignore it
+    //  because it will revert finalization. Note that the finalized block is stored in fork
+    //  choice, so we will not reject any child of the finalized block (this is relevant during
+    //  genesis).
+    //
+    // Since blocks are large, borrowing is less efficient than taking and returning ownership.
+    if !chain.fork_choice.contains_block(&block.message.parent_root) {
+        return Err(BlockError::ParentUnknownCorrect(Box::new(block.message)));
+    }
 
+    // Load the parent block and state from disk, returning early if it's not available.
+    let result: Result<BeaconSnapshot<T::EthSpec>,BlockError<T::EthSpec>> = chain
+        .snapshot_cache
+        .try_write_for(BLOCK_PROCESSING_CACHE_LOCK_TIMEOUT)
+        .and_then(|mut snapshot_cache| snapshot_cache.try_remove(block.message.parent_root))
+        .map(|snapshot| Ok(Some(snapshot)))
+        .unwrap_or_else(|| {
+            // didn't get parent -> we don't /yet/ know the parent
 
+            // Load the blocks parent block from the database, returning invalid if that block is not
+            // found.
+            //
+            // We don't return a DBInconsistent error here since it's possible for a block to
+            // exist in fork choice but not in the database yet. In such a case we simply
+            // indicate that we don't yet know the parent.
+            let parent_block = if let Some(block) = chain.get_block(&block.message.parent_root)? {
+                block
+            } else {
+                return Ok(None);
+            };
 
+            // Load the parent block's state from the database, returning an error if it is not found.
+            // It is an error because if we know the parent block we should also know the parent state.
+            let parent_state_root = parent_block.state_root();
+            let parent_state = chain
+                .get_state(&parent_state_root, Some(parent_block.slot()))?
+                .ok_or_else(|| {
+                    BeaconChainError::DBInconsistent(format!(
+                        "Missing state {:?}",
+                        parent_state_root
+                    ))
+                })?;
 
+            Ok(Some(BeaconSnapshot {
+                beacon_block: parent_block,
+                beacon_block_root: block.message.parent_root,
+                beacon_state: parent_state,
+                beacon_state_root: parent_state_root,
+            }))
+        })
+        .map_err(BlockError::BeaconChainError)?
+        .ok_or_else(|| BlockError::ParentUnknown(block.message.parent_root));
+
+    metrics::stop_timer(db_read_timer);
+
+		//tk comment: in this variation, changed all instances of block.parent_root
+		// to block.message.parent_root
+		Ok((result.unwrap(), Box::from(block)))
 }
 
 /// Performs a cheap (time-efficient) state advancement so the committees for `slot` can be
