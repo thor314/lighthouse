@@ -321,7 +321,7 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
             });
         }
 
-        let mut parent = load_parent(&block.message, chain)?; //tk remove this borrow
+        let (mut parent,block) = load_parent_signed(block, chain)?; //tk remove this borrow
         let block_root = get_block_root(&block);
 
         let state = cheap_state_advance_to_obtain_committees(
@@ -375,7 +375,7 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
         }
 
         Ok(Self {
-            block,
+            block: *block,
             block_root,
             parent,
         })
