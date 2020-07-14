@@ -484,13 +484,14 @@ impl<T: BeaconChainTypes> Processor<T> {
         block: Box<SignedBeaconBlock<T::EthSpec>>,
     ) -> Result<GossipVerifiedBlock<T>, BlockError<T::EthSpec>> {
         // Want to avoid the following clone:
-        let result = self.chain.verify_block_for_gossip(*block.clone());
+				//tk result: Result<GVB<T>,BlockError<T>>
+        let result = self.chain.verify_block_for_gossip(*block);
 
         // updated to parentunknowncorrect, because same diff
-        if let Err(BlockError::ParentUnknownCorrect(_)) = result {
+        if let Err(BlockError::ParentUnknownCorrect(signedblockbox)) = result {
             // if we don't know the parent, start a parent lookup
             // TODO: Modify the return to avoid the block clone.
-            self.send_to_sync(SyncMessage::UnknownBlock(peer_id.clone(), block));
+            self.send_to_sync(SyncMessage::UnknownBlock(peer_id.clone(), signedblockbox.clone()));
             // value used here
         }
         result

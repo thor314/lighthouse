@@ -279,7 +279,7 @@ impl<T: BeaconChainTypes> Router<T> {
                         self.propagate_message(id, peer_id.clone());
                         self.processor.on_block_gossip(peer_id, verified_block);
                     }
-                    Err(BlockError::ParentUnknown { .. }) => {} // performing a parent lookup
+                    Err(BlockError::ParentUnknownCorrect(block)) => {self.processor.do_thing_with(block)} // performing a parent lookup
                     Err(e) => {
                         // performing a parent lookup
                         warn!(self.log, "Could not verify block for gossip";
